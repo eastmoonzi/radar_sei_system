@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+.venv/
+env/
+.env/
+
+# IDE config files
+.vscode/
+.idea/
+
+# Data files (根据需要决定是否要忽略)
+*.dat
+*.iq
