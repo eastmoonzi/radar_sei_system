@@ -9,7 +9,7 @@ from sklearn.exceptions import NotFittedError
 # 后面我们会从config.yaml读取
 DEFAULT_MODEL_DIR = "./saved_models"
 
-def train(features: pd.DataFrame, labels: list, model_type: str, params: dict) -> (str, dict):
+def train(features: pd.DataFrame, labels: list, model_type: str, params: dict) -> tuple[str, dict]:
     """
     使用给定的特征和标签训练一个指定类型的分类器。
     (MVP版本：暂时忽略model_type和params，只使用默认的逻辑回归)

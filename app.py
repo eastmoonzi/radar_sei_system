@@ -4,10 +4,16 @@ import os
 import time
 
 # 导入我们所有的自定义模块
-from radar_sei_system.data_management import load_iq_data
-from radar_sei_system.feature_extraction import extract_features
-from radar_sei_system.ml_modeling import train, predict
-from radar_sei_system.performance_evaluation import evaluate
+try:
+    from radar_sei_system.data_management import load_iq_data
+    from radar_sei_system.feature_extraction import extract_features
+    from radar_sei_system.ml_modeling import train, predict
+    from radar_sei_system.performance_evaluation import evaluate
+except ImportError as e:
+    st.error(f"启动失败：无法导入核心模块。请检查 __init__.py 文件是否配置正确。")
+    st.error(f"详细错误: {e}")
+    st.stop()
+
 
 # --- 1. 基本配置和常量 ---
 st.set_page_config(page_title="雷达辐射源识别系统 (MVP)", layout="wide")
@@ -53,8 +59,8 @@ if page == "🎯 预测 (Prediction)":
     
     st.success(f"已加载模型: {MODEL_SAVE_PATH}")
 
-    # 2. 文件上传
-    uploaded_file = st.file_uploader("上传一个 .iq 或 .dat 文件进行预测", type=["iq", "dat"])
+    # 2. 文件上传 (只接受 .h5)
+    uploaded_file = st.file_uploader("上传一个 .h5 文件进行预测", type=["h5"])
 
     if uploaded_file is not None:
         st.write(f"已上传文件: `{uploaded_file.name}`")
@@ -72,8 +78,9 @@ if page == "🎯 预测 (Prediction)":
                     data_obj = load_iq_data(temp_file_path)
                     if data_obj:
                         st.write(f"信号长度: {len(data_obj['iq_data'])}, 采样率: {data_obj['sampling_rate']/1e6} MHz")
+                        st.write(f"文件内部标签 (仅供参考): {data_obj.get('label', 'N/A')}")
                     else:
-                        st.error("数据加载失败！")
+                        st.error("数据加载失败！请检查文件格式是否正确。")
                         st.stop()
 
                     # 步骤 C: 提取特征
@@ -90,7 +97,9 @@ if page == "🎯 预测 (Prediction)":
                     st.subheader("3. 预测结果")
                     prediction_list = predict(feature_obj, MODEL_SAVE_PATH)
                     if prediction_list:
-                        st.json(prediction_list[0]) # 显示第一个（也是唯一一个）结果
+                        result = prediction_list[0]
+                        st.metric(label="预测标签", value=result.get('predicted_label'))
+                        st.json(result.get('probabilities'))
                     else:
                         st.error("预测执行失败！")
                         st.stop()
@@ -111,13 +120,13 @@ elif page == "🏋️ 训练 (Training)":
     st.header("🏋️ 训练新模型")
     st.info("""
     **重要提示 (MVP版):**
-    1.  请上传**多个**用于训练的IQ文件。
-    2.  文件命名必须符合规范: **`标签名_任意字符.iq`** (例如: `DeviceA_001.iq`, `DeviceB_sample_02.dat`)
-    3.  程序将自动从文件名中提取 `_` 前的部分作为标签。
+    1.  请上传**多个** .h5 训练文件。
+    2.  为确保分类器能工作，上传的文件必须包含**至少2个不同**的内部标签 (例如: 一些是'1021', 一些是'1022')。
+    3.  程序将自动从 .h5 文件内部的 `InterPulse/LABEL` 路径读取标签。
     """)
 
-    # 1. 文件上传 (多文件)
-    uploaded_files = st.file_uploader("上传训练数据集 (可多选)", accept_multiple_files=True, type=["iq", "dat"])
+    # 1. 文件上传 (多文件, 只接受 .h5)
+    uploaded_files = st.file_uploader("上传训练数据集 (可多选)", accept_multiple_files=True, type=["h5"])
 
     if uploaded_files:
         st.write(f"总共上传了 {len(uploaded_files)} 个文件。")
@@ -134,23 +143,29 @@ elif page == "🏋️ 训练 (Training)":
             
             with st.spinner(f'正在处理 {len(uploaded_files)} 个文件... 这可能需要几分钟...'):
                 progress_bar = st.progress(0)
+                status_text = st.empty()
                 
                 for i, file in enumerate(uploaded_files):
+                    status_text.text(f"正在处理: {file.name}...")
                     try:
-                        # 步骤 A: 提取标签
-                        label = file.name.split('_')[0]
-                        if not label:
-                            st.warning(f"文件 {file.name} 命名不规范，已跳过。")
-                            continue
+                        # =================================================
+                        # --- 这是我们修正的关键逻辑 ---
+                        # =================================================
                         
-                        # 步骤 B: 保存临时文件
+                        # 步骤 A: 保存临时文件
                         temp_path = save_uploaded_file(file)
                         temp_files_to_clean.append(temp_path)
                         
-                        # 步骤 C: 加载数据
+                        # 步骤 B: 加载数据 (loader.py 会自动提取内部标签)
                         data_obj = load_iq_data(temp_path)
                         if not data_obj:
                             st.warning(f"加载 {file.name} 失败，已跳过。")
+                            continue
+                            
+                        # 步骤 C: 提取标签 (从 data_obj 中获取)
+                        label = data_obj.get("label")
+                        if not label or label == "unknown":
+                            st.warning(f"文件 {file.name} 内部未找到有效标签，已跳过。")
                             continue
                             
                         # 步骤 D: 提取特征
@@ -158,6 +173,10 @@ elif page == "🏋️ 训练 (Training)":
                         if feature_obj.empty:
                             st.warning(f"提取 {file.name} 特征失败，已跳过。")
                             continue
+                        
+                        # =================================================
+                        # --- 修正逻辑结束 ---
+                        # =================================================
                             
                         all_features_list.append(feature_obj)
                         all_labels.append(label)
@@ -166,17 +185,26 @@ elif page == "🏋️ 训练 (Training)":
                         st.warning(f"处理 {file.name} 时出错: {e}，已跳过。")
                     
                     progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                status_text.text("所有文件处理完毕！")
 
             # 步骤 E: 合并所有特征
             if not all_features_list:
-                st.error("没有文件被成功处理！")
+                st.error("没有文件被成功处理！请检查文件格式和内容。")
                 st.stop()
                 
             training_features = pd.concat(all_features_list, ignore_index=True)
             st.subheader("提取的特征总览 (前5行):")
             st.dataframe(training_features.head())
+            
+            label_counts = pd.Series(all_labels).value_counts()
             st.write(f"总共提取了 {len(all_labels)} 个样本。")
-            st.write(f"标签分布: {pd.Series(all_labels).value_counts().to_dict()}")
+            st.write("标签分布:")
+            st.dataframe(label_counts)
+
+            if len(label_counts) < 2:
+                st.error(f"训练失败：只找到了 {len(label_counts)} 个唯一的标签。分类器至少需要2个不同的类别才能训练。")
+                st.stop()
 
             # 步骤 F: 执行训练
             st.subheader("模型训练")
@@ -188,14 +216,20 @@ elif page == "🏋️ 训练 (Training)":
             st.json(train_log)
 
             # 步骤 G: (可选) 在训练集上进行评估
-            st.subheader("训练集表现")
+            st.subheader("训练集表现 (用于调试)")
             predictions_on_train = predict(training_features, model_path)
             eval_results = evaluate(predictions_on_train, all_labels)
+            
             st.metric(label="训练集准确率", value=f"{eval_results.get('accuracy', 0):.2%}")
+            
             st.write("混淆矩阵:")
-            st.dataframe(pd.DataFrame(eval_results.get('confusion_matrix'), 
-                                     columns=eval_results.get('labels_in_matrix'), 
-                                     index=eval_results.get('labels_in_matrix')))
+            cm_labels = eval_results.get('labels_in_matrix')
+            if cm_labels:
+                st.dataframe(pd.DataFrame(eval_results.get('confusion_matrix'), 
+                                         columns=cm_labels, 
+                                         index=cm_labels))
+            else:
+                st.write("无法生成混淆矩阵。")
 
             # 步骤 H: 清理所有临时文件
             for path in temp_files_to_clean:
