@@ -7,4 +7,3 @@ mock_data_object = {
     "label": "mock_device",
     "metadata": {}
 }
-
