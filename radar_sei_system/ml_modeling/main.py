@@ -3,13 +3,14 @@ import joblib
 import os
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import NotFittedError
+from typing import Tuple
 
 # 我们需要一个地方来保存模型，我们假设这个路径在config.yaml中定义
 # 但为了快速跑通，我们先在代码里硬编码一个默认路径
 # 后面我们会从config.yaml读取
 DEFAULT_MODEL_DIR = "./saved_models"
 
-def train(features: pd.DataFrame, labels: list, model_type: str, params: dict) -> tuple[str, dict]:
+def train(features: pd.DataFrame, labels: list, model_type: str, params: dict) -> Tuple[str, dict]:
     """
     使用给定的特征和标签训练一个指定类型的分类器。
     (MVP版本：暂时忽略model_type和params，只使用默认的逻辑回归)

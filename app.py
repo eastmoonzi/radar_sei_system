@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import time
+from typing import Tuple # 确保 typing 被导入
 
 # 导入我们所有的自定义模块
 try:
@@ -16,10 +17,14 @@ except ImportError as e:
 
 
 # --- 1. 基本配置和常量 ---
-st.set_page_config(page_title="雷达辐射源识别系统 (MVP)", layout="wide")
-st.title("⚡ 雷达辐射源指纹识别系统 (MVP版)")
+# ==================================================================
+# ================== 诊断修改点：修改标题 ==================
+st.set_page_config(page_title="雷达辐射源识别系统 (V3)", layout="wide")
+st.title("✅【V3 强制刷新版】雷达辐射源指纹识别系统")
+# ==================================================================
+# ==================================================================
 
-# 硬编码模型路径 (与ml_modeling模块中的DEFAULT_MODEL_DIR保持一致)
+# 硬编码模型路径
 MODEL_SAVE_DIR = "./saved_models"
 MODEL_SAVE_PATH = os.path.join(MODEL_SAVE_DIR, "mvp_model.pkl")
 
@@ -59,7 +64,18 @@ if page == "🎯 预测 (Prediction)":
     
     st.success(f"已加载模型: {MODEL_SAVE_PATH}")
 
-    # 2. 文件上传 (只接受 .h5)
+    # --- (V2 新功能) 预测时也需要选择特征 ---
+    st.subheader("1. 特征选择")
+    st.warning("请确保你选择的特征与训练模型时使用的特征 *完全一致*！")
+    feature_options = st.multiselect(
+        '选择用于预测的特征:',
+        ['power_spectrum', 'vmd'],
+        default=['power_spectrum'] # 默认值
+    )
+    # ------------------------------------
+    
+    # 2. 文件上传
+    st.subheader("2. 上传数据")
     uploaded_file = st.file_uploader("上传一个 .h5 文件进行预测", type=["h5"])
 
     if uploaded_file is not None:
@@ -67,6 +83,10 @@ if page == "🎯 预测 (Prediction)":
         
         # 3. 开始预测
         if st.button("开始预测"):
+            if not feature_options:
+                st.error("请至少选择一种特征！")
+                st.stop()
+
             with st.spinner('正在处理...'):
                 temp_file_path = ""
                 try:
@@ -74,34 +94,30 @@ if page == "🎯 预测 (Prediction)":
                     temp_file_path = save_uploaded_file(uploaded_file)
                     
                     # 步骤 B: 加载数据
-                    st.subheader("1. 数据加载")
+                    st.subheader("A. 数据加载")
                     data_obj = load_iq_data(temp_file_path)
-                    if data_obj:
-                        st.write(f"信号长度: {len(data_obj['iq_data'])}, 采样率: {data_obj['sampling_rate']/1e6} MHz")
-                        st.write(f"文件内部标签 (仅供参考): {data_obj.get('label', 'N/A')}")
-                    else:
-                        st.error("数据加载失败！请检查文件格式是否正确。")
+                    if not data_obj:
+                        st.error("数据加载失败！")
                         st.stop()
+                    st.write(f"信号长度: {len(data_obj['iq_data'])}, 采样率: {data_obj['sampling_rate']/1e6} MHz")
 
-                    # 步骤 C: 提取特征
-                    st.subheader("2. 特征提取")
-                    # MVP阶段，我们只使用 'power_spectrum' 特征
-                    feature_obj = extract_features(data_obj, methods=['power_spectrum'])
-                    if not feature_obj.empty:
-                        st.dataframe(feature_obj)
-                    else:
+                    # 步骤 C: 提取特征 (使用选择的特征)
+                    st.subheader("B. 特征提取")
+                    feature_obj = extract_features(data_obj, methods=feature_options)
+                    if feature_obj.empty:
                         st.error("特征提取失败！")
                         st.stop()
+                    st.dataframe(feature_obj)
 
                     # 步骤 D: 执行预测
-                    st.subheader("3. 预测结果")
+                    st.subheader("C. 预测结果")
                     prediction_list = predict(feature_obj, MODEL_SAVE_PATH)
                     if prediction_list:
                         result = prediction_list[0]
                         st.metric(label="预测标签", value=result.get('predicted_label'))
                         st.json(result.get('probabilities'))
                     else:
-                        st.error("预测执行失败！")
+                        st.error("预测执行失败！请检查模型与特征是否匹配。")
                         st.stop()
 
                 except Exception as e:
@@ -119,13 +135,22 @@ if page == "🎯 预测 (Prediction)":
 elif page == "🏋️ 训练 (Training)":
     st.header("🏋️ 训练新模型")
     st.info("""
-    **重要提示 (MVP版):**
-    1.  请上传**多个** .h5 训练文件。
-    2.  为确保分类器能工作，上传的文件必须包含**至少2个不同**的内部标签 (例如: 一些是'1021', 一些是'1022')。
-    3.  程序将自动从 .h5 文件内部的 `InterPulse/LABEL` 路径读取标签。
+    **提示:**
+    1.  上传的文件必须包含**至少2个不同**的内部标签才能训练。
+    2.  程序将自动从 .h5 文件内部的 `InterPulse/LABEL` 路径读取标签。
     """)
 
-    # 1. 文件上传 (多文件, 只接受 .h5)
+    # --- (V2 新功能) 训练时选择特征 ---
+    st.subheader("1. 特征选择")
+    feature_options = st.multiselect(
+        '选择要提取的特征 (可多选):',
+        ['power_spectrum', 'vmd'], # 'vmd' 是我们新增的选项
+        default=['power_spectrum'] # 默认只选我们之前那个
+    )
+    # -----------------------------
+
+    # 1. 文件上传
+    st.subheader("2. 上传数据")
     uploaded_files = st.file_uploader("上传训练数据集 (可多选)", accept_multiple_files=True, type=["h5"])
 
     if uploaded_files:
@@ -133,6 +158,10 @@ elif page == "🏋️ 训练 (Training)":
         
         # 2. 开始训练
         if st.button("开始训练"):
+            if not feature_options:
+                st.error("请至少选择一种特征！")
+                st.stop()
+
             if len(uploaded_files) < 2:
                 st.error("训练至少需要2个文件。")
                 st.stop()
@@ -141,17 +170,13 @@ elif page == "🏋️ 训练 (Training)":
             all_labels = []
             temp_files_to_clean = []
             
-            with st.spinner(f'正在处理 {len(uploaded_files)} 个文件... 这可能需要几分钟...'):
+            with st.spinner(f'正在处理 {len(uploaded_files)} 个文件... VMD可能很慢...'):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
                 for i, file in enumerate(uploaded_files):
                     status_text.text(f"正在处理: {file.name}...")
                     try:
-                        # =================================================
-                        # --- 这是我们修正的关键逻辑 ---
-                        # =================================================
-                        
                         # 步骤 A: 保存临时文件
                         temp_path = save_uploaded_file(file)
                         temp_files_to_clean.append(temp_path)
@@ -168,15 +193,11 @@ elif page == "🏋️ 训练 (Training)":
                             st.warning(f"文件 {file.name} 内部未找到有效标签，已跳过。")
                             continue
                             
-                        # 步骤 D: 提取特征
-                        feature_obj = extract_features(data_obj, methods=['power_spectrum'])
+                        # 步骤 D: 提取特征 (使用选择的特征)
+                        feature_obj = extract_features(data_obj, methods=feature_options)
                         if feature_obj.empty:
                             st.warning(f"提取 {file.name} 特征失败，已跳过。")
                             continue
-                        
-                        # =================================================
-                        # --- 修正逻辑结束 ---
-                        # =================================================
                             
                         all_features_list.append(feature_obj)
                         all_labels.append(label)
@@ -215,7 +236,7 @@ elif page == "🏋️ 训练 (Training)":
             st.success(f"训练完成！模型已保存到: {model_path}")
             st.json(train_log)
 
-            # 步骤 G: (可选) 在训练集上进行评估
+            # 步骤 G: 在训练集上进行评估
             st.subheader("训练集表现 (用于调试)")
             predictions_on_train = predict(training_features, model_path)
             eval_results = evaluate(predictions_on_train, all_labels)
